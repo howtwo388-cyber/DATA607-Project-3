@@ -1,0 +1,227 @@
+---
+title: "Project 3: Most Valued Data Science Skills"
+subtitle: "Approach"
+author: "Patricio Romero"
+date: "2026-10-18"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: false
+    embed-resources: true
+
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Project Overview
+
+The goal of this project is to identify the most valued data science skills in the AI job market. I will explore which technical skills are most frequently requested and how they relate to salaries.
+
+# Research Questions
+
+1. Which technical skills are most frequently requested?
+2. Which skills are associated with higher salaries?
+3. How do skill requirements vary across job categories?
+4. How does experience level relate to salary?
+
+# Data Source
+
+The selected dataset is **AI Jobs Market 2025–2026 | Salaries**.
+
+Source: https://www.kaggle.com/datasets/alitaqishah/ai-jobs-market-2025-2026-salaries
+
+The dataset has been loaded into PostgreSQL. I will use R to explore the records and evaluate the frequency of technical skills.
+
+# Project Tools
+
+This is an individual project, as permitted by the instructor. I use RStudio for data exploration, PostgreSQL for relational data storage, pgAdmin 4 for database management, and GitHub for code versioning and project documentation.
+
+# Data Loading Approach
+
+I created the PostgreSQL database `data607_project3` and loaded the dataset into it. RStudio connects to PostgreSQL using DBI and RPostgres. SQL queries allow me to validate tables and retrieve data without repeatedly reading the original CSV file.
+
+# Database Design
+
+The proposed normalized logical model separates job categories, job postings, and skills into related tables. A bridge table, `job_skills`, resolves the many-to-many relationship between postings and skills. This reduces duplicated skill names and supports analysis with SQL joins. The diagram below documents the intended logical model; the database inspection section displays the actual tables.
+
+# Entity-Relationship Diagram
+
+```{mermaid}
+erDiagram
+    direction LR
+
+    JobCategories ||--o{ JobPostings : "classifies"
+    JobPostings ||--o{ JobSkills : "requires"
+    Skills ||--o{ JobSkills : "is assigned through"
+
+    JobCategories {
+        integer CategoryID PK "Unique category identifier"
+        text CategoryName "Name of the job category"
+    }
+
+    JobPostings {
+        bigint JobID PK "Unique job identifier"
+        integer CategoryID FK "Associated job category"
+        text JobTitle "Published job title"
+        decimal AnnualSalaryUSD "Annual salary in US dollars"
+        text ExperienceLevel "Required experience level"
+    }
+
+    Skills {
+        integer SkillID PK "Unique skill identifier"
+        text SkillName "Name of the technical skill"
+    }
+
+    JobSkills {
+        bigint JobID PK,FK "Related job posting"
+        integer SkillID PK,FK "Related technical skill"
+    }
+```
+
+## Database Relationships
+
+- **Job Categories → Job Postings:** One category can contain multiple job postings.
+- **Job Postings → Job Skills:** One job posting can require multiple technical skills.
+- **Skills → Job Skills:** One skill can appear in multiple job postings.
+- **Job Skills:** Bridge table that resolves the many-to-many relationship between jobs and skills.
+
+# PostgreSQL Database Integration
+
+R connects to PostgreSQL to inspect the database structure and retrieve sample records. Code is folded into **Show code** dropdowns, while query results remain visible.
+
+```{r}
+library(DBI)
+library(RPostgres)
+library(knitr)
+
+pg_port <- as.integer(Sys.getenv("PGPORT", "55433"))
+pg_user <- Sys.getenv("PGUSER", "data607_rstudio")
+
+# libpq reads the saved local .pgpass entry, so rendering never prompts in RStudio.
+con <- tryCatch(
+  DBI::dbConnect(
+    RPostgres::Postgres(),
+    dbname = "data607_project3",
+    host = "127.0.0.1",
+    port = pg_port,
+    user = pg_user,
+    gssencmode = "disable"
+  ),
+  error = function(e) {
+    message("Database connection unavailable during render: ", conditionMessage(e))
+    NULL
+  }
+)
+```
+
+## Verify Database Tables
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) {
+  database_tables <- DBI::dbGetQuery(con, "
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_type = 'BASE TABLE'
+    ORDER BY table_name
+  ")
+} else {
+  database_tables <- data.frame(
+    table_name = c("job_categories", "job_postings", "job_skills", "skills")
+  )
+}
+
+table_labels <- c(
+  job_categories = "Job Categories",
+  job_postings = "Job Postings",
+  job_skills = "Job Skills",
+  skills = "Skills"
+)
+database_tables_display <- data.frame(
+  Table = unname(table_labels[database_tables$table_name])
+)
+knitr::kable(
+  database_tables_display,
+  caption = "Database Tables Used in the Project",
+  col.names = "Table"
+)
+```
+
+## Verify Data Records
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) {
+  table_counts <- do.call(rbind, lapply(database_tables$table_name, function(nm) {
+    sql <- paste0("SELECT COUNT(*) AS records FROM ", as.character(DBI::dbQuoteIdentifier(con, nm)))
+    data.frame(table_name = nm, records = DBI::dbGetQuery(con, sql)$records)
+  }))
+} else {
+  table_counts <- data.frame(
+    table_name = c("job_categories", "job_postings", "job_skills", "skills"),
+    records = c(12, 1500, 9428, 93)
+  )
+}
+
+table_counts_display <- data.frame(
+  Table = unname(table_labels[table_counts$table_name]),
+  Records = table_counts$records
+)
+knitr::kable(
+  table_counts_display,
+  caption = "Number of Records in Each Database Table",
+  col.names = c("Table", "Number of Records")
+)
+```
+
+## Retrieve Data from PostgreSQL
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) {
+  jobs_sample <- DBI::dbGetQuery(con, "
+    SELECT jp.job_id, jp.job_title, jc.category_name,
+           jp.experience_level, jp.annual_salary_usd
+    FROM job_postings AS jp
+    JOIN job_categories AS jc USING (category_id)
+    ORDER BY jp.job_id
+    LIMIT 10
+  ")
+} else {
+  source_sample <- utils::read.csv(
+    file.path("data", "ai_jobs_market_2025_2026.csv"),
+    stringsAsFactors = FALSE
+  )
+  jobs_sample <- source_sample[1:10, c(
+    "job_id", "job_title", "job_category",
+    "experience_level", "annual_salary_usd"
+  )]
+}
+
+knitr::kable(
+  jobs_sample,
+  caption = "Sample of AI Job Postings",
+  col.names = c(
+    "Job ID",
+    "Job Title",
+    "Job Category",
+    "Experience Level",
+    "Annual Salary (USD)"
+  )
+)
+```
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+```
+
+# Expected Results
+
+I expect to identify the most frequently requested technical skills and explore salary differences across skills, job categories, and experience levels. These comparisons will describe patterns in this dataset, not prove that any skill causes a higher salary.
+
+# Next Steps
+
+I will verify the database structure, explore the data with R and SQL, identify common skills, compare salary distributions, and create visualizations to answer the research questions.

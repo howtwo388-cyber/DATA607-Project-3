@@ -1,0 +1,157 @@
+---
+title: "Project 3: Most Valued Data Science Skills"
+subtitle: "Approach"
+author: "Patricio Romero"
+date: "2026-10-18"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Project Overview
+
+The goal of this project is to identify the most valued data science skills in the AI job market. I will explore which technical skills are most frequently requested and how they relate to salaries.
+
+# Research Questions
+
+1. Which technical skills are most frequently requested?
+2. Which skills are associated with higher salaries?
+3. How do skill requirements vary across job categories?
+4. How does experience level relate to salary?
+
+# Data Source
+
+The selected dataset is **AI Jobs Market 2025–2026 | Salaries**.
+
+Source: https://www.kaggle.com/datasets/alitaqishah/ai-jobs-market-2025-2026-salaries
+
+The dataset has been loaded into PostgreSQL. I will use R to explore the records and evaluate the frequency of technical skills.
+
+# Project Tools
+
+This is an individual project, as permitted by the instructor. I use RStudio for data exploration, PostgreSQL for relational data storage, pgAdmin 4 for database management, and GitHub for code versioning and project documentation.
+
+# Data Loading Approach
+
+I created the PostgreSQL database `data607_project3` and loaded the dataset into it. RStudio connects to PostgreSQL using DBI and RPostgres. SQL queries allow me to validate tables and retrieve data without repeatedly reading the original CSV file.
+
+# Database Design
+
+The proposed normalized logical model separates job categories, job postings, and skills into related tables. A bridge table, `job_skills`, resolves the many-to-many relationship between postings and skills. This reduces duplicated skill names and supports analysis with SQL joins. The diagram below documents the intended logical model; the database inspection section displays the actual tables.
+
+# Entity-Relationship Diagram
+
+```{mermaid}
+erDiagram
+    JOB_CATEGORIES ||--o{ JOB_POSTINGS : contains
+    JOB_POSTINGS ||--o{ JOB_SKILLS : requires
+    SKILLS ||--o{ JOB_SKILLS : appears_in
+    JOB_CATEGORIES {
+        int category_id PK
+        string category_name
+    }
+    JOB_POSTINGS {
+        int job_id PK
+        int category_id FK
+        string job_title
+        decimal annual_salary_usd
+        string experience_level
+    }
+    SKILLS {
+        int skill_id PK
+        string skill_name
+    }
+    JOB_SKILLS {
+        int job_id PK,FK
+        int skill_id PK,FK
+    }
+```
+
+# PostgreSQL Database Integration
+
+The following code connects to PostgreSQL without using `rstudioapi::askForPassword()`, which fails when Quarto renders outside the RStudio interactive session. The password is read from the `PGPASSWORD` environment variable or the PostgreSQL password file (`~/.pgpass`), not written in this document.
+
+```{r}
+library(DBI)
+library(RPostgres)
+library(knitr)
+
+pg_password <- Sys.getenv("PGPASSWORD")
+pg_port <- as.integer(Sys.getenv("PGPORT", "55433"))
+pg_user <- Sys.getenv("PGUSER", "postgres")
+
+# Quarto can render the Approach even when local credentials are unavailable.
+# The actual connection results appear when credentials and server are available.
+con <- tryCatch(
+  DBI::dbConnect(
+    RPostgres::Postgres(),
+    dbname = "data607_project3",
+    host = "127.0.0.1",
+    port = pg_port,
+    user = pg_user,
+    gssencmode = "disable",
+    password = if (nzchar(pg_password)) pg_password else NULL
+  ),
+  error = function(e) {
+    message("Database connection unavailable during render: ", conditionMessage(e))
+    NULL
+  }
+)
+rm(pg_password)
+```
+
+## Verify Database Tables
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) {
+  database_tables <- DBI::dbGetQuery(con, "
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_type = 'BASE TABLE'
+    ORDER BY table_name
+  ")
+  knitr::kable(database_tables, caption = "PostgreSQL Tables")
+} else {
+  cat("Database verification will be displayed when the local PostgreSQL connection is available.")
+}
+```
+
+## Verify Data Records
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) {
+  table_counts <- do.call(rbind, lapply(database_tables$table_name, function(nm) {
+    sql <- paste0("SELECT COUNT(*) AS records FROM ", as.character(DBI::dbQuoteIdentifier(con, nm)))
+    data.frame(table_name = nm, records = DBI::dbGetQuery(con, sql)$records)
+  }))
+  if (nrow(table_counts)) knitr::kable(table_counts, caption = "Rows per Table")
+}
+```
+
+## Retrieve Data from PostgreSQL
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con) &&
+    "job_postings" %in% database_tables$table_name) {
+  jobs_sample <- DBI::dbGetQuery(con, "SELECT * FROM job_postings LIMIT 10")
+  knitr::kable(jobs_sample, caption = "Sample Job Postings")
+}
+```
+
+```{r}
+if (!is.null(con) && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+```
+
+# Expected Results
+
+I expect to identify the most frequently requested technical skills and explore salary differences across skills, job categories, and experience levels. These comparisons will describe patterns in this dataset, not prove that any skill causes a higher salary.
+
+# Next Steps
+
+I will verify the database structure, explore the data with R and SQL, identify common skills, compare salary distributions, and create visualizations to answer the research questions.
